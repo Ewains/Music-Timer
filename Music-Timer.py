@@ -1,6 +1,6 @@
 import sys
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox
 import datetime
 import subprocess
 import os
@@ -38,6 +38,8 @@ class SchedulerApp:
         self.root.title("定时播放工具")
         self.tasks = []
         self.tray_icon_initialized = False
+        self.selected_task_index = None
+        self.time_options = self.generate_time_options()  # 创建时间选项
 
         # 创建托盘图标
         self.tray_icon = TrayIcon("定时播放软件", self.load_icon(), menu=Menu(
@@ -45,8 +47,8 @@ class SchedulerApp:
             Item('退出', self.exit_app)
         ))
 
-        self.create_widgets()  # 先创建UI组件
-        self.load_tasks()      # 然后加载任务
+        self.create_widgets()
+        self.load_tasks()
 
         self.update_time()
         self.check_tasks()
@@ -59,17 +61,19 @@ class SchedulerApp:
         frame.pack(padx=10, pady=10)
 
         tk.Label(frame, text="开始时间 (HH:MM):").grid(row=0, column=0, sticky="e")
-        self.start_time_entry = tk.Entry(frame)
-        self.start_time_entry.grid(row=0, column=1, padx=5, pady=5)
+        self.start_time_var = tk.StringVar(value=self.time_options[0])
+        self.start_time_combobox = ttk.Combobox(frame, textvariable=self.start_time_var, values=self.time_options, state="normal")
+        self.start_time_combobox.grid(row=0, column=1, padx=5, pady=5)
 
         tk.Label(frame, text="结束时间 (HH:MM):").grid(row=1, column=0, sticky="e")
-        self.end_time_entry = tk.Entry(frame)
-        self.end_time_entry.grid(row=1, column=1, padx=5, pady=5)
+        self.end_time_var = tk.StringVar(value=self.time_options[0])
+        self.end_time_combobox = ttk.Combobox(frame, textvariable=self.end_time_var, values=self.time_options, state="normal")
+        self.end_time_combobox.grid(row=1, column=1, padx=5, pady=5)
 
-        tk.Label(frame, text="音量:").grid(row=0, column=2, sticky="e")
+        tk.Label(frame, text="音量:").grid(row=0, column=3, sticky="e")
         self.volume_scale = tk.Scale(frame, from_=0, to=100, orient=tk.HORIZONTAL)
-        self.volume_scale.set(100)
-        self.volume_scale.grid(row=0, column=3, padx=5, pady=5, rowspan=2)
+        self.volume_scale.set(50)
+        self.volume_scale.grid(row=0, column=4, padx=5, pady=5, rowspan=2)
 
         tk.Label(frame, text="选择重复的天:").grid(row=2, column=0, sticky="e")
         self.days_vars = []
@@ -88,6 +92,7 @@ class SchedulerApp:
 
         tk.Button(button_frame, text="选择播放软件", command=self.choose_file).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="添加任务", command=self.add_task).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="编辑任务", command=self.edit_task).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="删除任务", command=self.delete_task).pack(side=tk.LEFT, padx=5)
 
         list_frame = tk.Frame(self.root)
@@ -114,10 +119,12 @@ class SchedulerApp:
         author_label.pack(pady=5)
         author_label.bind("<Button-1>", lambda e: webbrowser.open("https://ewain.top"))
 
-    def update_time(self):
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.time_label.config(text=f"当前时间: {now}")
-        self.root.after(1000, self.update_time)
+    def generate_time_options(self):
+        times = []
+        for hour in range(24):
+            for minute in (0, 30):
+                times.append(f"{hour:02}:{minute:02}")
+        return times
 
     def choose_file(self):
         self.file_path = filedialog.askopenfilename()
@@ -125,22 +132,36 @@ class SchedulerApp:
             messagebox.showinfo("选择路径", f"已选择: {self.file_path}")
 
     def add_task(self):
-        start_time_str = self.start_time_entry.get()
-        end_time_str = self.end_time_entry.get()
+        start_time_str = self.start_time_var.get()
+        end_time_str = self.end_time_var.get()
         days = [var.get() for var in self.days_vars]
         volume = self.volume_scale.get() / 100
         try:
             start_time = datetime.datetime.strptime(start_time_str, "%H:%M").time()
             end_time = datetime.datetime.strptime(end_time_str, "%H:%M").time()
             if hasattr(self, 'file_path') and self.file_path:
-                task = Task(start_time, end_time, self.file_path, days, volume)
-                self.tasks.append(task)
+                if self.selected_task_index is not None:
+                    task = self.tasks[self.selected_task_index]
+                    task.start_time = start_time
+                    task.end_time = end_time
+                    task.days = days
+                    task.volume = volume
+                    task.path = self.file_path
+                    self.task_list.delete(self.selected_task_index)
+                    index = self.selected_task_index
+                    self.selected_task_index = None
+                else:
+                    task = Task(start_time, end_time, self.file_path, days, volume)
+                    self.tasks.append(task)
+                    index = tk.END
+
                 days_str = ','.join([day for day, var in zip(["周一", "周二", "周三", "周四", "周五", "周六", "周日"], days) if var])
                 if not days_str:
                     days_str = "一次性"
-                self.task_list.insert(tk.END, f"{start_time} - {end_time} - {os.path.basename(self.file_path)} - 音量: {volume*100}% - {days_str}")
-                self.start_time_entry.delete(0, tk.END)
-                self.end_time_entry.delete(0, tk.END)
+                self.task_list.insert(index, f"{start_time} - {end_time} - {os.path.basename(self.file_path)} - 音量: {volume*100}% - {days_str}")
+
+                self.start_time_combobox.set(self.time_options[0])
+                self.end_time_combobox.set(self.time_options[0])
                 for var in self.days_vars:
                     var.set(False)
                 self.volume_scale.set(100)
@@ -219,6 +240,31 @@ class SchedulerApp:
         except Exception as e:
             logging.error(f"Failed to set volume: {e}")
 
+    def edit_task(self):
+        selected = self.task_list.curselection()
+        if selected:
+            index = selected[0]
+            self.selected_task_index = index
+            task = self.tasks[index]
+
+            # 填入任务信息到输入框
+            self.start_time_combobox.set(task.start_time.strftime("%H:%M"))
+            self.end_time_combobox.set(task.end_time.strftime("%H:%M"))
+
+            for var, day_selected in zip(self.days_vars, task.days):
+                var.set(day_selected)
+
+            self.volume_scale.set(task.volume * 100)
+
+            self.file_path = task.path
+            messagebox.showinfo("编辑任务", f"正在编辑任务: {os.path.basename(task.path)}")
+        else:
+            messagebox.showwarning("错误", "请选择要编辑的任务")
+
+    def update_time(self):
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.time_label.config(text=f"当前时间: {now}")
+        self.root.after(1000, self.update_time)
 
     def minimize_to_tray(self):
         print("Minimizing to tray")
