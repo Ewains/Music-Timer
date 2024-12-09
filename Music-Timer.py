@@ -9,6 +9,7 @@ from pystray import Icon as TrayIcon, MenuItem as Item, Menu
 from PIL import Image
 import json
 import logging
+import winreg
 
 try:
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -65,15 +66,21 @@ class SchedulerApp:
         self.start_time_combobox = ttk.Combobox(frame, textvariable=self.start_time_var, values=self.time_options, state="normal")
         self.start_time_combobox.grid(row=0, column=1, padx=5, pady=5)
 
+        tk.Label(frame, text="音量:").grid(row=0, column=2, sticky="e")
+        self.volume_scale = tk.Scale(frame, from_=0, to=100, orient=tk.HORIZONTAL)
+        self.volume_scale.set(50)
+        self.volume_scale.grid(row=0, column=3, padx=5, pady=5)
+
         tk.Label(frame, text="结束时间 (HH:MM):").grid(row=1, column=0, sticky="e")
         self.end_time_var = tk.StringVar(value=self.time_options[0])
         self.end_time_combobox = ttk.Combobox(frame, textvariable=self.end_time_var, values=self.time_options, state="normal")
         self.end_time_combobox.grid(row=1, column=1, padx=5, pady=5)
 
-        tk.Label(frame, text="音量:").grid(row=0, column=3, sticky="e")
-        self.volume_scale = tk.Scale(frame, from_=0, to=100, orient=tk.HORIZONTAL)
-        self.volume_scale.set(50)
-        self.volume_scale.grid(row=0, column=4, padx=5, pady=5, rowspan=2)
+        # 开机启动选项
+        self.auto_start_var = tk.BooleanVar()
+        auto_start_checkbox = tk.Checkbutton(frame, text="开机自动启动", variable=self.auto_start_var, command=self.toggle_auto_start)
+        auto_start_checkbox.grid(row=1, column=2, columnspan=2)
+        self.check_auto_start()
 
         tk.Label(frame, text="选择重复的天:").grid(row=2, column=0, sticky="e")
         self.days_vars = []
@@ -118,6 +125,45 @@ class SchedulerApp:
         author_label = tk.Label(self.root, text="作者: 掌昆运维部", font=("Arial", 10), fg="blue", cursor="hand2")
         author_label.pack(pady=5)
         author_label.bind("<Button-1>", lambda e: webbrowser.open("https://ewain.top"))
+
+    def toggle_auto_start(self):
+        if self.auto_start_var.get():
+            self.set_auto_start()
+        else:
+            self.remove_auto_start()
+
+    def set_auto_start(self):
+        try:
+            exe_path = os.path.abspath(sys.argv[0])
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, "SchedulerApp", 0, winreg.REG_SZ, exe_path)
+            winreg.CloseKey(key)
+            messagebox.showinfo("信息", "已设置开机自动启动")
+        except Exception as e:
+            messagebox.showerror("错误", f"无法设置开机启动: {e}")
+
+    def remove_auto_start(self):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE)
+            winreg.DeleteValue(key, "SchedulerApp")
+            winreg.CloseKey(key)
+            messagebox.showinfo("信息", "已取消开机自动启动")
+        except FileNotFoundError:
+            messagebox.showinfo("信息", "开机自动启动未设置")
+        except Exception as e:
+            messagebox.showerror("错误", f"无法取消开机启动: {e}")
+
+    def check_auto_start(self):
+        try:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ)
+            value, _ = winreg.QueryValueEx(key, "SchedulerApp")
+            winreg.CloseKey(key)
+            if value == os.path.abspath(sys.argv[0]):
+                self.auto_start_var.set(True)
+        except FileNotFoundError:
+            self.auto_start_var.set(False)
+        except Exception as e:
+            messagebox.showerror("错误", f"检查开机启动状态时出错: {e}")
 
     def generate_time_options(self):
         times = []
