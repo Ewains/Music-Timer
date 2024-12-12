@@ -10,6 +10,8 @@ from PIL import Image
 import json
 import logging
 import winreg
+import pyautogui
+import time
 
 try:
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
@@ -252,9 +254,26 @@ class SchedulerApp:
                 self.set_system_volume(task.volume)
             task.process = subprocess.Popen(task.path)
             logging.info(f"Successfully started task: {task.path} with volume: {task.volume*100}%")
+
+            # 等待应用程序启动
+            time.sleep(5)
+
+            # 根据路径判断并模拟按键
+            if 'CloudMusic' in task.path:
+                pyautogui.hotkey('ctrl', 'alt','right')
+                logging.info("Simulated ctrl + alt + right for CloudMusic")
+            elif 'KGMusic' in task.path:
+                pyautogui.hotkey('alt','right')
+                time.sleep(1)
+                pyautogui.hotkey('alt','right')
+                logging.info("Simulated alt + right for KGMusic")
+            elif 'QQMusic' in task.path:
+                pyautogui.hotkey('ctrl', 'alt','right')
+                logging.info("Simulated ctrl + alt + right for QQMusic")
+
         except Exception as e:
             logging.error(f"Failed to start task: {task.path} - Error: {e}")
-
+            
     def end_task(self, task):
         try:
             if task.process:
