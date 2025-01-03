@@ -13,18 +13,39 @@ import winreg
 import pyautogui
 import time
 
+from tendo import singleton
+
+# 确保只运行一个实例
+try:
+    me = singleton.SingleInstance()
+except singleton.SingleInstanceException:
+    messagebox.showinfo("这是一个严重的警告！", "已经运行了，还点！！天呐，受不鸟了，敢点“确定”我就关机！！")
+    messagebox.showinfo("这是一个不太严重的警告！","逗你玩的，查看任务栏查看程序，哈哈哈！！")
+    sys.exit(0)
+
 try:
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
     from comtypes import CLSCTX_ALL
 except ImportError:
     AudioUtilities = None
 
+# 获取当前目录（对于可执行文件）
+if getattr(sys, 'frozen', False):
+    current_directory = os.path.dirname(sys.executable)
+else:
+    current_directory = os.path.dirname(os.path.abspath(__file__))
+
+
+
 # 配置日志记录
+log_file_path = os.path.join(current_directory, 'log.txt')
 logging.basicConfig(
-    filename='log.txt',
+    filename=log_file_path,
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    encoding='utf-8'
 )
+
 
 class Task:
     def __init__(self, start_time, end_time, path, days, volume):
@@ -45,16 +66,23 @@ class SchedulerApp:
         self.time_options = self.generate_time_options()  # 创建时间选项
 
         # 创建托盘图标
-        self.tray_icon = TrayIcon("定时播放软件", self.load_icon(), menu=Menu(
-            Item('显示', self.show_window),
-            Item('退出', self.exit_app)
-        ))
+        try:
+            # 创建托盘图标
+            self.tray_icon = TrayIcon("定时播放软件", self.load_icon(), menu=Menu(
+                Item('显示', self.show_window),
+                Item('退出', self.exit_app)
+            ))
+            logging.info("Tray icon initialized with name: 定时播放软件")
+        except Exception as e:
+            logging.error(f"Error initializing tray icon: {e}")
+
 
         self.create_widgets()
         self.load_tasks()
 
         self.update_time()
         self.check_tasks()
+        
 
         # 重写关闭事件
         self.root.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
@@ -239,6 +267,10 @@ class SchedulerApp:
             if (task.days[weekday] or not any(task.days)) and task.start_time <= current_time < task.end_time:
                 if task.process is None:
                     self.run_task(task)
+                # 在任务结束前10秒开始降低音量
+                remaining_time = (datetime.datetime.combine(datetime.date.today(), task.end_time) - datetime.datetime.now()).total_seconds()
+                if 0 < remaining_time <= 10:
+                    self.fade_out_volume(task, remaining_time)
             elif task.process and current_time >= task.end_time:
                 self.end_task(task)
                 if not any(task.days):  # 如果是一次性任务
@@ -248,32 +280,81 @@ class SchedulerApp:
 
         self.root.after(1000, self.check_tasks)
 
-    def run_task(self, task):
+    # 淡出功能
+    def fade_out_volume(self, task, remaining_time):
         try:
             if AudioUtilities:
-                self.set_system_volume(task.volume)
+                devices = AudioUtilities.GetSpeakers()
+                interface = devices.Activate(
+                    IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                volume = interface.QueryInterface(IAudioEndpointVolume)
+                
+                # 获取当前音量
+                current_volume = volume.GetMasterVolumeLevelScalar()
+                # 计算新的音量
+                decrement = current_volume / remaining_time
+                new_volume = max(0.0, current_volume - decrement)
+                volume.SetMasterVolumeLevelScalar(new_volume, None)
+                logging.info(f"Fading out volume to: {new_volume*100}%")
+        except Exception as e:
+            logging.error(f"Failed to fade out volume: {e}")
+
+    # 淡入功能
+    def fade_in_volume(self, target_volume, duration=10):
+        try:
+            if AudioUtilities:
+                devices = AudioUtilities.GetSpeakers()
+                interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+                volume = interface.QueryInterface(IAudioEndpointVolume)
+
+                # 取消静音
+                volume.SetMute(0, None)
+
+                # 从静音开始逐步增加到目标音量
+                current_volume = 0.0
+                increment = target_volume / duration
+
+                for _ in range(duration):
+                    current_volume = min(target_volume, current_volume + increment)
+                    volume.SetMasterVolumeLevelScalar(current_volume, None)
+                    logging.info(f"Fading in volume to: {current_volume*100}%")
+                    time.sleep(1)  # 每秒增加一次音量
+        except Exception as e:
+            logging.error(f"Failed to fade in volume: {e}")
+
+
+
+    def run_task(self, task):
+        try:
             task.process = subprocess.Popen(task.path)
-            logging.info(f"Successfully started task: {task.path} with volume: {task.volume*100}%")
+            logging.info(f"Successfully started task: {task.path} with initial volume: {task.volume*100}%")
 
             # 等待应用程序启动
-            time.sleep(5)
+            time.sleep(7)
 
             # 根据路径判断并模拟按键
             if 'CloudMusic' in task.path:
                 pyautogui.hotkey('ctrl', 'alt','right')
                 logging.info("Simulated ctrl + alt + right for CloudMusic")
+                # 调用淡入音量
+                self.fade_in_volume(task.volume)
             elif 'KGMusic' in task.path:
                 pyautogui.hotkey('alt','right')
                 time.sleep(1)
                 pyautogui.hotkey('alt','right')
                 logging.info("Simulated alt + right for KGMusic")
+                # 调用淡入音量
+                self.fade_in_volume(task.volume)
             elif 'QQMusic' in task.path:
                 pyautogui.hotkey('ctrl', 'alt','right')
                 logging.info("Simulated ctrl + alt + right for QQMusic")
+                # 调用淡入音量
+                self.fade_in_volume(task.volume)
 
         except Exception as e:
             logging.error(f"Failed to start task: {task.path} - Error: {e}")
-            
+
+
     def end_task(self, task):
         try:
             if task.process:
@@ -367,12 +448,14 @@ class SchedulerApp:
             'volume': task.volume
         } for task in self.tasks]
 
-        with open('tasks.json', 'w', encoding='utf-8') as f:
+        tasks_file_path = os.path.join(current_directory, 'tasks.json')
+        with open(tasks_file_path, 'w', encoding='utf-8') as f:
             json.dump(tasks_data, f, ensure_ascii=False, indent=4)
 
     def load_tasks(self):
+        tasks_file_path = os.path.join(current_directory, 'tasks.json')
         try:
-            with open('tasks.json', 'r', encoding='utf-8') as f:
+            with open(tasks_file_path, 'r', encoding='utf-8') as f:
                 tasks_data = json.load(f)
                 for task_data in tasks_data:
                     start_time = datetime.datetime.strptime(task_data['start_time'], "%H:%M").time()
@@ -384,7 +467,11 @@ class SchedulerApp:
                         days_str = "一次性"
                     self.task_list.insert(tk.END, f"{start_time} - {end_time} - {os.path.basename(task_data['path'])} - 音量: {task_data['volume']*100}% - {days_str}")
         except FileNotFoundError:
-            pass
+            logging.warning("tasks.json file not found.")
+        except Exception as e:
+            logging.error(f"Error loading tasks: {e}")
+
+        logging.info(f"Loading tasks from: {tasks_file_path}")
 
 if __name__ == "__main__":
     root = tk.Tk()
